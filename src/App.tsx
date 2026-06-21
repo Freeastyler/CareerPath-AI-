@@ -161,6 +161,70 @@ export default function App() {
     setErrorStatus(null);
   };
 
+/**
+ * Compresses an image file in browser before sending to reduce latency and stay under backend payload limits.
+ */
+function compressImageIfPossible(file: File): Promise<File | Blob> {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith("image/")) {
+      resolve(file);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_WIDTH = 1600;
+        const MAX_HEIGHT = 1600;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+          if (width > height) {
+            height = Math.round((height * MAX_WIDTH) / width);
+            width = MAX_WIDTH;
+          } else {
+            width = Math.round((width * MAX_HEIGHT) / height);
+            height = MAX_HEIGHT;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(file);
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", {
+                type: "image/jpeg",
+                lastModified: Date.now(),
+              });
+              resolve(compressedFile);
+            } else {
+              resolve(file);
+            }
+          },
+          "image/jpeg",
+          0.85
+        );
+      };
+      img.onerror = () => resolve(file);
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => resolve(file);
+    reader.readAsDataURL(file);
+  });
+}
+
   /**
    * Common helper calling backend upload & structured AI auditing endpoint
    */
@@ -175,11 +239,37 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `Server responded with ${response.status}`);
+        let errorMsg = `Server error ${response.status}`;
+        try {
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            const errData = await response.json();
+            errorMsg = errData.error || errorMsg;
+          } else {
+            const textHTML = await response.text();
+            if (response.status === 413) {
+              errorMsg = "The file is too large to audit. Please choose a smaller resume document or an optimized image (maximum 10MB).";
+            } else if (textHTML.length > 0 && textHTML.length < 250) {
+              errorMsg = textHTML;
+            } else {
+              errorMsg = `CV analysis server returned an error (HTTP Status ${response.status}).`;
+            }
+          }
+        } catch {
+          if (response.status === 413) {
+            errorMsg = "The file is too large to audit. Please choose a smaller resume document or an optimized image (maximum 10MB).";
+          }
+        }
+        throw new Error(errorMsg);
       }
 
-      const result = await response.json();
+      let result;
+      try {
+        result = await response.json();
+      } catch (jsonErr) {
+        throw new Error("Unable to parse the resume analysis result. The file format may be corrupted or too complex. Please try scanning a PDF version.");
+      }
+
       const finalName = fileNameOverride || result.fileName || "Pasted Text Draft";
       setAnalysisResult({
         fileName: finalName,
@@ -240,9 +330,21 @@ export default function App() {
   };
 
   // 1. Core file drop / browse selection analysis handler
-  const handleAnalyzeFile = (file: File) => {
+  const handleAnalyzeFile = async (file: File) => {
+    setIsAnalyzing(true);
+    setErrorStatus(null);
+    let finalFile: File | Blob = file;
+    
+    if (file.type.startsWith("image/")) {
+      try {
+        finalFile = await compressImageIfPossible(file);
+      } catch (err) {
+        console.warn("Failed client-side quality compression, proceeding with original file binary.", err);
+      }
+    }
+
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", finalFile, file.name);
     executeAnalysis(formData, file.name);
   };
 

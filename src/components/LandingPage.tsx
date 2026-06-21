@@ -114,14 +114,22 @@ export default function LandingPage({
   };
 
   const validateAndSetFile = (file: File) => {
-    const isPDF = file.type === "application/pdf" || file.name.endsWith(".pdf");
-    const isDocx = file.name.endsWith(".docx");
-    const isTxt = file.type === "text/plain" || file.name.endsWith(".txt");
+    // 10MB limits
+    const maxSizeBytes = 10 * 1024 * 1024;
+    if (file.size > maxSizeBytes && !file.type.startsWith("image/")) {
+      alert(`The selected file is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a resume document smaller than 10MB.`);
+      return;
+    }
 
-    if (isPDF || isDocx || isTxt) {
+    const isPDF = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isDocx = file.name.toLowerCase().endsWith(".docx");
+    const isTxt = file.type === "text/plain" || file.name.toLowerCase().endsWith(".txt");
+    const isImage = file.type.startsWith("image/") || /\.(jpg|jpeg|png|webp)$/i.test(file.name);
+
+    if (isPDF || isDocx || isTxt || isImage) {
       setSelectedFile(file);
     } else {
-      alert("Please upload a PDF, DOCX or TXT resume file.");
+      alert("Unsupported file format. Please upload a PDF, DOCX, TXT or photo/screenshot of your resume.");
     }
   };
 
@@ -220,7 +228,7 @@ export default function LandingPage({
                   ref={fileInputRef}
                   type="file"
                   onChange={handleFileChange}
-                  accept=".pdf,.docx,.txt"
+                  accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp"
                   className="hidden"
                 />
                 
@@ -234,14 +242,14 @@ export default function LandingPage({
                       <p className="text-white font-medium text-base">{selectedFile.name}</p>
                       <p className="text-xs text-emerald-400 flex items-center justify-center gap-1">
                         <CheckCircle2 className="h-3.5 w-3.5" />
-                        <span>Ready for advanced AI analysis ({(selectedFile.size / 1024).toFixed(1)} KB)</span>
+                        <span>Ready for advanced AI analysis ({(selectedFile.size / 1024).toFixed(0)} KB)</span>
                       </p>
                     </div>
                   ) : (
                     <div className="space-y-1">
                       <p className="text-white font-semibold text-base">Drag & drop your resume here</p>
-                      <p className="text-sm text-slate-400">PDF, DOCX, or TXT file formats supported</p>
-                      <p className="text-[11px] text-slate-500 mt-2 font-mono">Max size: 10MB</p>
+                      <p className="text-sm text-slate-400">PDF, DOCX, TXT, or Image (PNG/JPG) formats</p>
+                      <p className="text-[11px] text-slate-500 mt-2 font-mono">Max size: 10MB (Images automatically optimized)</p>
                     </div>
                   )}
 

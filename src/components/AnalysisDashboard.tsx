@@ -82,17 +82,43 @@ export default function AnalysisDashboard({
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
+  const validateReanalyzeFile = (file: File): boolean => {
+    const maxSizeBytes = 10 * 1024 * 1024;
+    if (file.size > maxSizeBytes && !file.type.startsWith("image/")) {
+      alert(`The selected file is too large (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a resume document smaller than 10MB.`);
+      return false;
+    }
+
+    const isPDF = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isDocx = file.name.toLowerCase().endsWith(".docx");
+    const isTxt = file.type === "text/plain" || file.name.toLowerCase().endsWith(".txt");
+    const isImage = file.type.startsWith("image/") || /\.(jpg|jpeg|png|webp)$/i.test(file.name);
+
+    if (isPDF || isDocx || isTxt || isImage) {
+      return true;
+    } else {
+      alert("Unsupported file format. Please upload a PDF, DOCX, TXT or photo/screenshot of your resume.");
+      return false;
+    }
+  };
+
   // Drag-and-drop support for quick re-analyzer
   const handleReanalyzeDrop = (e: React.DragEvent) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      onReanalyzeFile(e.dataTransfer.files[0]);
+      const file = e.dataTransfer.files[0];
+      if (validateReanalyzeFile(file)) {
+        onReanalyzeFile(file);
+      }
     }
   };
 
   const handleReanalyzeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      onReanalyzeFile(e.target.files[0]);
+      const file = e.target.files[0];
+      if (validateReanalyzeFile(file)) {
+        onReanalyzeFile(file);
+      }
     }
   };
 
@@ -687,7 +713,7 @@ export default function AnalysisDashboard({
                   <input 
                     type="file" 
                     onChange={handleReanalyzeChange} 
-                    accept=".pdf,.docx,.txt" 
+                    accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.webp" 
                     className="hidden" 
                   />
                 </label>

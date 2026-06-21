@@ -168,9 +168,9 @@ app.post("/api/analyze-cv", upload.single("file"), async (req: Request, res: Res
       mimeType = req.file.mimetype;
 
       // Determine how to extract or use the file
-      if (mimeType === "text/plain" || fileName.endsWith(".txt")) {
+      if (mimeType === "text/plain" || fileName.toLowerCase().endsWith(".txt")) {
         cvText = req.file.buffer.toString("utf-8");
-      } else if (mimeType === "application/pdf" || fileName.endsWith(".pdf")) {
+      } else if (mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")) {
         // Since Gemini 3.5 Flash natively accepts PDF files as inlineData,
         // we can construct an inlineData part to send it directly!
         inlineDataPart = {
@@ -180,7 +180,23 @@ app.post("/api/analyze-cv", upload.single("file"), async (req: Request, res: Res
           },
         };
         cvText = "[Sent Direct PDF Bytes to Gemini]";
-      } else if (fileName.endsWith(".docx")) {
+      } else if (mimeType.startsWith("image/") || /\.(jpg|jpeg|png|webp)$/i.test(fileName)) {
+        // Since Gemini 3.5 Flash is multimodal, it accepts images directly!
+        // This is extremely powerful for mobile users taking a photo of their CV
+        let resolvedMimeType = mimeType;
+        if (!resolvedMimeType.startsWith("image/")) {
+          if (fileName.toLowerCase().endsWith(".png")) resolvedMimeType = "image/png";
+          else if (fileName.toLowerCase().endsWith(".webp")) resolvedMimeType = "image/webp";
+          else resolvedMimeType = "image/jpeg";
+        }
+        inlineDataPart = {
+          inlineData: {
+            data: req.file.buffer.toString("base64"),
+            mimeType: resolvedMimeType,
+          },
+        };
+        cvText = "[Sent Direct Image Bytes to Gemini]";
+      } else if (fileName.toLowerCase().endsWith(".docx")) {
         // Simple human-readable extraction for docx XML strings if read as text,
         // but for now let's convert the raw stream text as fallback or send it to gemini.
         // Actually, we'll try to convert ASCII characters as text,
@@ -357,6 +373,25 @@ app.post("/api/analyze-cv", upload.single("file"), async (req: Request, res: Res
       details: error.message || error,
     });
   }
+});
+
+// Custom error handling middleware to prevent HTML error responses and handle Multer file size errors gracefully
+app.use((err: any, req: Request, res: Response, next: any) => {
+  console.error("Express Error Handler:", err);
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      res.status(413).json({
+        error: "The uploaded file is too large. The maximum allowed file size is 10MB. Please choose a smaller document or optimize your file.",
+        code: "LIMIT_FILE_SIZE"
+      });
+      return;
+    }
+    res.status(400).json({ error: `File upload error: ${err.message}` });
+    return;
+  }
+  res.status(err.status || 500).json({
+    error: err.message || "An unexpected error occurred during processing. Please try again."
+  });
 });
 
 // ---------------------------------------------------------
