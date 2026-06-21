@@ -229,9 +229,11 @@ app.post("/api/analyze-cv", upload.single("file"), async (req: Request, res: Res
       You must return your feedback in rigorous JSON format that fits the requested schema perfectly.
     `;
 
+    const cvTextPlaceholder = inlineDataPart ? "the attached document" : cvText;
+
     const userPrompt = `
       Please analyze the following CV/Resume content:
-      "${cvText}"
+      "${cvTextPlaceholder}"
       
       Requirements for output:
       - overall score: 0 to 100, reflecting the current state in modern professional standards
@@ -247,16 +249,16 @@ app.post("/api/analyze-cv", upload.single("file"), async (req: Request, res: Res
       - overallNextSteps: Checklist of next 4-5 steps to execute immediately.
     `;
 
-    const contents: any[] = [];
+    const parts: any[] = [];
     if (inlineDataPart) {
-      contents.push(inlineDataPart);
+      parts.push(inlineDataPart);
     }
-    contents.push({ text: userPrompt });
+    parts.push({ text: userPrompt });
 
     // Call the Gemini 3.5 Flash Model
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
-      contents,
+      contents: { parts },
       config: {
         systemInstruction,
         responseMimeType: "application/json",
