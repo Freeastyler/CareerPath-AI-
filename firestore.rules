@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable, hardened helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // Validation Blueprint for Saved Document Analysis
+    function isValidAnalysis(data) {
+      return data.keys().hasAll(['userId', 'fileName', 'timestamp', 'analysis'])
+        && data.keys().size() == 4
+        && data.userId is string
+        && data.userId == request.auth.uid
+        && data.fileName is string
+        && data.fileName.size() <= 256
+        && data.timestamp is string
+        && data.analysis is map;
+    }
+
+    match /analyses/{analysisId} {
+      // Verify path variables and ensure only the owner can fetch or delete
+      allow get, delete: if isSignedIn() && isValidId(analysisId) && resource.data.userId == request.auth.uid;
+      
+      // Ensure the query enforcer is executed secure list-level
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      // Hardened write validation
+      allow create: if isSignedIn() 
+        && isValidId(analysisId)
+        && isValidAnalysis(incoming())
+        && incoming().userId == request.auth.uid;
+
+      allow update: if false;
+    }
+  }
+}

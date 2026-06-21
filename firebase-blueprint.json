@@ -1,0 +1,35 @@
+{
+  "entities": {
+    "cvAnalysis": {
+      "title": "CV Analysis",
+      "description": "Evaluation of CV/Resume scoring and ATS feedback content.",
+      "type": "object",
+      "properties": {
+        "score": { "type": "integer" },
+        "feedback": { "type": "object" },
+        "tailoredSuggestions": { "type": "array" },
+        "suggestedRoles": { "type": "array" },
+        "skillsBreakdown": { "type": "object" },
+        "overallNextSteps": { "type": "array" }
+      }
+    },
+    "savedAnalysis": {
+      "title": "Saved Analysis",
+      "description": "An analysis report saved to professional user's account.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "analysis": { "type": "object", "$ref": "cvAnalysis" }
+      },
+      "required": ["userId", "fileName", "timestamp", "analysis"]
+    }
+  },
+  "firestore": {
+    "analyses/{analysisId}": {
+      "schema": "savedAnalysis",
+      "description": "Saved ATS evaluations and resume feedback for users"
+    }
+  }
+}

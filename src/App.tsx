@@ -11,6 +11,18 @@ import AnalysisDashboard from "./components/AnalysisDashboard";
 import AuthModal from "./components/AuthModal";
 import { CVAnalysis, SavedAnalysis } from "./types";
 import { AlertCircle, Sliders } from "lucide-react";
+import { auth, db, OperationType, handleFirestoreError } from "./lib/firebase";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { 
+  collection, 
+  getDocs, 
+  getDocFromServer,
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  query, 
+  where 
+} from "firebase/firestore";
 
 export default function App() {
   const [analysisResult, setAnalysisResult] = useState<{
@@ -22,35 +34,72 @@ export default function App() {
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
 
   // Authentication & History management states
-  const [user, setUser] = useState<{ email: string; displayName?: string } | null>(null);
+  const [user, setUser] = useState<{ email: string; displayName?: string; uid?: string } | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [savedAnalyses, setSavedAnalyses] = useState<SavedAnalysis[]>([]);
 
   // Monitor auth state changes on mount
   useEffect(() => {
-    const localUserRaw = localStorage.getItem("local_current_user");
-    if (localUserRaw) {
+    // 1. Connection check as mandated by Firebase integration guidelines
+    const testConnection = async () => {
       try {
-        const u = JSON.parse(localUserRaw);
-        setUser(u);
-        fetchUserHistory(u.email);
-      } catch (err) {
-        console.warn("Failed to parse logged user session:", err);
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration.");
+        }
       }
-    }
+    };
+    testConnection();
+
+    // 2. Real auth state monitoring
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser) {
+        const sessionUser = {
+          email: firebaseUser.email || "",
+          displayName: firebaseUser.displayName || "Active Professional",
+          uid: firebaseUser.uid
+        };
+        setUser(sessionUser);
+        fetchUserHistory(firebaseUser.uid);
+      } else {
+        setUser(null);
+        setSavedAnalyses([]);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const fetchUserHistory = (userEmail: string) => {
+  const fetchUserHistory = async (userId: string) => {
     try {
-      const localAnalysesRaw = localStorage.getItem("local_analyses");
-      const list: SavedAnalysis[] = localAnalysesRaw ? JSON.parse(localAnalysesRaw) : [];
-      // Filter list for only the logged-in user email
-      const items = list.filter((a) => a.userId === userEmail);
-      // Sort items chronologically descending by timestamp
-      items.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const q = query(collection(db, "analyses"), where("userId", "==", userId));
+      const querySnapshot = await getDocs(q);
+      const items: SavedAnalysis[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        items.push({
+          id: docSnap.id,
+          userId: d.userId,
+          fileName: d.fileName || "CV Evaluation Repo",
+          timestamp: d.timestamp,
+          analysis: d.analysis
+        });
+      });
+      // Sort client side, resilient against missing compound index configurations
+      items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setSavedAnalyses(items);
     } catch (err) {
-      console.warn("Failed to fetch evaluation history from localStorage:", err);
+      console.warn("Failed to fetch evaluation history from Firestore, falling back to local:", err);
+      try {
+        const localAnalysesRaw = localStorage.getItem("local_analyses");
+        const list: SavedAnalysis[] = localAnalysesRaw ? JSON.parse(localAnalysesRaw) : [];
+        const items = list.filter((a) => a.userId === userId);
+        items.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        setSavedAnalyses(items);
+      } catch (backupErr) {
+        handleFirestoreError(err, OperationType.LIST, "analyses");
+      }
     }
   };
 
@@ -61,30 +110,46 @@ export default function App() {
     });
   };
 
-  const handleDeleteHistory = (id: string) => {
+  const handleDeleteHistory = async (id: string) => {
     try {
-      const localAnalysesRaw = localStorage.getItem("local_analyses");
-      const list: SavedAnalysis[] = localAnalysesRaw ? JSON.parse(localAnalysesRaw) : [];
-      const updated = list.filter((a) => a.id !== id);
-      localStorage.setItem("local_analyses", JSON.stringify(updated));
-      if (user) {
-        fetchUserHistory(user.email);
+      if (auth.currentUser) {
+        // Delete the document directly from Firestore
+        await deleteDoc(doc(db, "analyses", id));
+        fetchUserHistory(auth.currentUser.uid);
+      } else {
+        const localAnalysesRaw = localStorage.getItem("local_analyses");
+        const list: SavedAnalysis[] = localAnalysesRaw ? JSON.parse(localAnalysesRaw) : [];
+        const updated = list.filter((a) => a.id !== id);
+        localStorage.setItem("local_analyses", JSON.stringify(updated));
+        if (user && user.uid) {
+          fetchUserHistory(user.uid);
+        }
       }
     } catch (err) {
-      console.error("Delete failed from local storage:", err);
+      console.error("Delete failed from Firestore / local storage:", err);
+      try {
+        handleFirestoreError(err, OperationType.DELETE, `analyses/${id}`);
+      } catch (errWrapped: any) {
+        setErrorStatus(`Deletion restricted: ${errWrapped.message || "Permissions denied"}`);
+      }
     }
   };
 
-  const handleAuthSuccess = (u: { email: string; displayName?: string } | null) => {
+  const handleAuthSuccess = (u: { email: string; displayName?: string; uid?: string } | null) => {
     setUser(u);
-    if (u) {
-      fetchUserHistory(u.email);
+    if (u && u.uid) {
+      fetchUserHistory(u.uid);
     } else {
       setSavedAnalyses([]);
     }
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.warn("Failed to sign out from Firebaseauth:", err);
+    }
     localStorage.removeItem("local_current_user");
     setUser(null);
     setSavedAnalyses([]);
@@ -121,15 +186,37 @@ export default function App() {
         analysis: result.analysis,
       });
 
-      // Synchronize to Local Storage database under candidate's email
-      if (user) {
+      // Synchronize to Firestore for premium authenticated candidates
+      if (auth.currentUser) {
+        try {
+          const analysisId = Math.random().toString(36).substring(2, 11);
+          const newAnalysis = {
+            userId: auth.currentUser.uid,
+            fileName: finalName,
+            timestamp: new Date().toISOString(),
+            analysis: result.analysis,
+          };
+
+          // Save to Firestore matching exact validation blueprint schema
+          await setDoc(doc(db, "analyses", analysisId), newAnalysis);
+          fetchUserHistory(auth.currentUser.uid);
+        } catch (dbErr) {
+          console.error("Could not write evaluation to Firestore:", dbErr);
+          try {
+            handleFirestoreError(dbErr, OperationType.CREATE, "analyses");
+          } catch (wrappedErr) {
+            // Logged to terminal, no user crash
+          }
+        }
+      } else if (user) {
+        // Fallback locally
         try {
           const localAnalysesRaw = localStorage.getItem("local_analyses");
           const list: SavedAnalysis[] = localAnalysesRaw ? JSON.parse(localAnalysesRaw) : [];
           
           const newAnalysis: SavedAnalysis = {
             id: Math.random().toString(36).substring(2, 11),
-            userId: user.email,
+            userId: user.uid || user.email,
             fileName: finalName,
             timestamp: new Date().toISOString(),
             analysis: result.analysis,
@@ -137,7 +224,9 @@ export default function App() {
 
           list.push(newAnalysis);
           localStorage.setItem("local_analyses", JSON.stringify(list));
-          fetchUserHistory(user.email);
+          if (user.uid) {
+            fetchUserHistory(user.uid);
+          }
         } catch (dbErr) {
           console.warn("Could not log evaluation to local database:", dbErr);
         }

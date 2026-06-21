@@ -1,5 +1,5 @@
 {
-  "name": "CV Insight AI",
+  "name": "CareerPath AI",
   "description": "Professional AI-powered career optimization platform that analyzes CVs, benchmarks against ATS, and provides recruiter-level improvement recommendations.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
